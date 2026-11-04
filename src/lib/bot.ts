@@ -376,22 +376,19 @@ async function replyNumberDetail(
 
   try {
     await ensureSchema();
-    const user = await upsertTelegramUser({
-      telegramId: from?.id ?? chatId,
+    await upsertTelegramUser({
       chatId,
       username: from?.username ?? null,
-      firstName: from?.first_name ?? null,
     });
     await setActiveWatchedNumber({
-      telegramUserId: user.id,
-      phoneE164: phone,
-      digits: clean,
+      chatId,
+      phoneNumber: phone,
       inboxUrl,
     });
     monitoringNote =
       "🔔 <b>Monitoring enabled</b> for this public inbox.\n" +
       "New SMS that appear on ASMS after this point will be forwarded here.\n" +
-      "Existing messages on the page are not re-sent.\n" +
+      "Existing messages on the page are not re-sent (baseline on first scan).\n" +
       "Send /stop to cancel monitoring.";
   } catch (err) {
     console.error("[bot] watch number failed:", err);
@@ -418,13 +415,11 @@ async function replyStop(
 ): Promise<void> {
   try {
     await ensureSchema();
-    const user = await upsertTelegramUser({
-      telegramId: from?.id ?? chatId,
+    await upsertTelegramUser({
       chatId,
       username: from?.username ?? null,
-      firstName: from?.first_name ?? null,
     });
-    const stopped = await deactivateActiveWatchedNumber(user.id);
+    const stopped = await deactivateActiveWatchedNumber(chatId);
     if (stopped) {
       await sendMessage(
         chatId,

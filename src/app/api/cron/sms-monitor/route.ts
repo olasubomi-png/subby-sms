@@ -4,7 +4,8 @@ import {
   listActiveWatchedNumbers,
   insertInboxMessage,
   markWatchedScanned,
-  recordDelivery,
+  claimDelivery,
+  releaseDeliveryClaim,
   type WatchedNumberRow,
 } from "@/lib/db";
 import { fetchPublicInbox } from "@/lib/asms-inbox";
@@ -23,6 +24,13 @@ function authorize(request: NextRequest): boolean {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return false;
   return header.slice(7) === secret;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function formatNotification(input: {
@@ -54,11 +62,8 @@ function formatNotification(input: {
   return lines.join("\n");
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function digitsFromPhone(phone: string): string {
+  return phone.replace(/\D/g, "");
 }
 
 async function processWatched(row: WatchedNumberRow): Promise<{
@@ -67,23 +72,38 @@ async function processWatched(row: WatchedNumberRow): Promise<{
   notified: number;
   error?: string;
 }> {
-  const inbox = await fetchPublicInbox(row.digits);
+  const digits = digitsFromPhone(row.phone_number);
+  const inbox = await fetchPublicInbox(digits);
+
   if (inbox.source === "error") {
+    // Do not advance last_scanned_at on hard fetch failure so we retry cleanly
+    return {
+      checked: true,
+      detected: 0,
+      notified: 0,
+      error: inbox.error ?? "inbox fetch failed",
+    };
+  }
+
+  if (inbox.source === "empty") {
     await markWatchedScanned(row.id);
-    return { checked: true, detected: 0, notified: 0, error: inbox.error };
+    return {
+      checked: true,
+      detected: 0,
+      notified: 0,
+      error: "No parseable messages in public HTML (page may be empty or JS-only)",
+    };
   }
 
   const isFirstScan = row.last_scanned_at == null;
   let detected = 0;
   let notified = 0;
-
-  // Limit messages processed per scan to avoid timeout
+  const chatId = Number(row.chat_id);
   const batch = inbox.messages.slice(0, 40);
 
   for (const msg of batch) {
     const { id, inserted } = await insertInboxMessage({
-      watchedNumberId: row.id,
-      externalId: msg.externalId,
+      phoneNumber: row.phone_number,
       messageHash: msg.messageHash,
       sender: msg.sender,
       body: msg.body,
@@ -91,19 +111,20 @@ async function processWatched(row: WatchedNumberRow): Promise<{
       receivedAt: msg.receivedAt,
     });
 
-    if (!inserted) continue;
-    detected += 1;
+    if (!id) continue;
+    if (inserted) detected += 1;
 
     // First scan: baseline only — store, do not notify
     if (isFirstScan) continue;
+    // Only notify for messages newly inserted this scan
+    if (!inserted) continue;
 
-    const canDeliver = await recordDelivery({
-      inboxMessageId: id,
-      telegramUserId: row.telegram_user_id,
+    const claim = await claimDelivery({
+      messageId: id,
+      chatId,
     });
-    if (!canDeliver) continue;
+    if (!claim) continue; // already claimed/delivered by another run
 
-    const chatId = Number(row.chat_id);
     const markup: InlineKeyboardMarkup = {
       inline_keyboard: [
         [{ text: "📬 Open public inbox", url: row.inbox_url }],
@@ -115,7 +136,9 @@ async function processWatched(row: WatchedNumberRow): Promise<{
       await sendMessage(
         chatId,
         formatNotification({
-          phone: row.phone_e164,
+          phone: row.phone_number.startsWith("+")
+            ? row.phone_number
+            : `+${row.phone_number}`,
           sender: msg.sender,
           body: msg.body,
           code: msg.code,
@@ -126,6 +149,8 @@ async function processWatched(row: WatchedNumberRow): Promise<{
       notified += 1;
     } catch (err) {
       console.error("[sms-monitor] telegram send failed:", err);
+      // Release claim so a later run can retry
+      await releaseDeliveryClaim(claim.claimId).catch(() => undefined);
     }
   }
 
@@ -156,13 +181,12 @@ async function runMonitor(): Promise<{
         try {
           return await processWatched(row);
         } catch (err) {
-          const msg =
-            err instanceof Error ? err.message : "process failed";
+          const msg = err instanceof Error ? err.message : "process failed";
           return {
             checked: true,
             detected: 0,
             notified: 0,
-            error: `${row.phone_e164}: ${msg}`,
+            error: `${row.phone_number}: ${msg}`,
           };
         }
       })
