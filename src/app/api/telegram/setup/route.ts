@@ -7,17 +7,16 @@ export const dynamic = "force-dynamic";
 
 /**
  * Registers the Telegram webhook URL with the secret token.
- * Protect with the same TELEGRAM_WEBHOOK_SECRET (header or ?secret=).
+ * Auth: header X-Telegram-Bot-Api-Secret-Token only (no query params).
  *
- * GET  — show current webhook info
+ * GET  — current webhook info
  * POST — set webhook to {APP_URL}/api/telegram/webhook
  */
 function authorize(request: NextRequest): boolean {
   try {
     const expected = getWebhookSecret();
     const header = request.headers.get("x-telegram-bot-api-secret-token");
-    const query = request.nextUrl.searchParams.get("secret");
-    return header === expected || query === expected;
+    return Boolean(header && header === expected);
   } catch {
     return false;
   }

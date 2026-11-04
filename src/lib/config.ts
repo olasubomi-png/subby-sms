@@ -34,14 +34,21 @@ export function isBotConfigured(): boolean {
   );
 }
 
-/** ASMS.ai public free directory (shared inboxes — not a private API). */
+/**
+ * Official ASMS.ai public pages (shared free inboxes).
+ * /numbers is the paid private-rental page — not used for free public browsing.
+ * Free list: https://asms.ai/free-phone-numbers
+ */
 export const ASMS = {
   home: "https://asms.ai",
-  numbers: "https://asms.ai/numbers",
-  /** Country list / filter on ASMS public site */
-  countries: "https://asms.ai/numbers",
-  /** Direct path users can open for public numbers by country code path if supported */
-  countryBase: "https://asms.ai/numbers",
+  /** Live free shared public numbers directory */
+  numbers: "https://asms.ai/free-phone-numbers",
+  /** Same directory (country filters on page) */
+  countries: "https://asms.ai/free-phone-numbers",
+  countryUk: "https://asms.ai/free-phone-numbers?country=uk",
+  countryNl: "https://asms.ai/free-phone-numbers?country=nl",
+  countryFi: "https://asms.ai/free-phone-numbers?country=fi",
+  countryUs: "https://asms.ai/free-phone-numbers?country=us",
 } as const;
 
 export const BOT_NAME = "SUBBY SMS";

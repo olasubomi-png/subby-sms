@@ -68,10 +68,11 @@ curl -X POST "https://YOUR_APP_URL/api/telegram/setup" \
   -H "X-Telegram-Bot-Api-Secret-Token: YOUR_WEBHOOK_SECRET"
 ```
 
-Or check current webhook info:
+Or check current webhook info (header auth only — no query secrets):
 
 ```bash
-curl "https://YOUR_APP_URL/api/telegram/setup?secret=YOUR_WEBHOOK_SECRET"
+curl "https://YOUR_APP_URL/api/telegram/setup" \
+  -H "X-Telegram-Bot-Api-Secret-Token: YOUR_WEBHOOK_SECRET"
 ```
 
 Webhook endpoint Telegram will call:

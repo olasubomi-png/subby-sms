@@ -5,7 +5,7 @@ export const metadata: Metadata = {
 };
 
 const ASMS_HOME = "https://asms.ai";
-const ASMS_NUMBERS = "https://asms.ai/numbers";
+const ASMS_NUMBERS = "https://asms.ai/free-phone-numbers";
 
 export default function HomePage() {
   return (

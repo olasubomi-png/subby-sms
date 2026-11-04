@@ -42,13 +42,17 @@ function numbersKeyboard(): InlineKeyboardMarkup {
 }
 
 function countriesKeyboard(): InlineKeyboardMarkup {
-  // Link users to ASMS public directory — do not invent country number lists.
+  // Official free-phone-numbers country filters on ASMS.ai
   return {
     inline_keyboard: [
-      [{ text: "🌍 Browse numbers by country", url: ASMS.countries }],
+      [{ text: "🌍 All free public numbers", url: ASMS.countries }],
       [
-        { text: "🇺🇸 US / others on ASMS", url: ASMS.numbers },
-        { text: "🌐 All countries", url: ASMS.numbers },
+        { text: "🇬🇧 UK", url: ASMS.countryUk },
+        { text: "🇳🇱 NL", url: ASMS.countryNl },
+      ],
+      [
+        { text: "🇫🇮 FI", url: ASMS.countryFi },
+        { text: "🇺🇸 US", url: ASMS.countryUs },
       ],
       [
         { text: "🔄 Refresh", callback_data: "countries" },
@@ -265,7 +269,6 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
     }
   } catch (err) {
     console.error("[bot] handleUpdate error:", err);
-    // Best-effort user feedback
     const chatId =
       update.message?.chat.id ?? update.callback_query?.message?.chat.id;
     if (chatId) {
@@ -275,8 +278,10 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
           "Something went wrong. Please try again in a moment."
         );
       } catch {
-        // ignore
+        // ignore secondary failure
       }
     }
+    // Propagate so the webhook can return 500 and Telegram may retry.
+    throw err;
   }
 }
