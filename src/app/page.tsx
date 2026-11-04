@@ -18,7 +18,7 @@ export default function HomePage() {
           SUBBY SMS
         </h1>
         <p className="mt-3 text-base leading-relaxed text-[var(--muted)] sm:text-lg">
-          Browse free <strong className="text-white">shared public</strong>{" "}
+          Browse live free <strong className="text-white">shared public</strong>{" "}
           temporary SMS numbers provided by{" "}
           <a href={ASMS_HOME} target="_blank" rel="noopener noreferrer">
             ASMS.ai
@@ -41,8 +41,8 @@ export default function HomePage() {
               menu
             </li>
             <li>
-              <code className="text-blue-300">/numbers</code> — link to the
-              ASMS public numbers directory
+              <code className="text-blue-300">/numbers</code> — live free
+              numbers from the ASMS public directory
             </li>
             <li>
               <code className="text-blue-300">/countries</code> — browse by

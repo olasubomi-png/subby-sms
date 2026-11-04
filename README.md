@@ -8,7 +8,7 @@ Hosted on **Vercel** (Next.js + TypeScript). Uses **Telegram webhooks** (no long
 
 | Available (free) | Not included |
 | --- | --- |
-| Links to ASMS.ai public number directory | Live invented phone numbers |
+| Live numbers scraped from ASMS public HTML directory | Invented phone numbers or SMS |
 | Guidance + privacy warnings | Reading SMS via free API |
 | Commands and inline menus | Private exclusive numbers |
 
@@ -21,7 +21,7 @@ ASMS.ai free inboxes are **public**. Automated API access is a **paid** ASMS fea
 | Command | Action |
 | --- | --- |
 | `/start` | Welcome + main menu |
-| `/numbers` | Open public numbers flow + ASMS directory button |
+| `/numbers` | Live free public numbers from ASMS.ai (paginated) |
 | `/countries` | Browse-by-country guidance + ASMS links |
 | `/help` | Instructions |
 | `/privacy` | Privacy risks of shared inboxes |

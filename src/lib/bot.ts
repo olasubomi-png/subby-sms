@@ -1,23 +1,31 @@
 /**
  * SUBBY SMS — Telegram bot command handlers.
  *
- * Honest about ASMS.ai free tier: shared public inboxes only.
- * No invented phone numbers or fake SMS content.
+ * Live free public numbers from ASMS.ai shared directory (HTML).
+ * No paid API. No invented numbers or SMS content.
  */
 
 import { ASMS, BOT_NAME } from "./config";
+import {
+  fetchPublicNumbers,
+  paginateNumbers,
+  countryLabel,
+  type AsmsPublicNumber,
+  type AsmsCountry,
+} from "./asms";
 import {
   sendMessage,
   answerCallbackQuery,
   type TelegramUpdate,
   type InlineKeyboardMarkup,
+  type InlineKeyboardButton,
 } from "./telegram";
 
 function mainMenuKeyboard(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
-        { text: "📱 Browse numbers", callback_data: "numbers" },
+        { text: "📱 Live free numbers", callback_data: "numbers:all:0" },
         { text: "🌍 By country", callback_data: "countries" },
       ],
       [
@@ -29,103 +37,143 @@ function mainMenuKeyboard(): InlineKeyboardMarkup {
   };
 }
 
-function numbersKeyboard(): InlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [{ text: "📱 Open public numbers directory", url: ASMS.numbers }],
-      [
-        { text: "🔄 Refresh", callback_data: "numbers" },
-        { text: "« Main menu", callback_data: "start" },
-      ],
-    ],
-  };
-}
-
-function countriesKeyboard(): InlineKeyboardMarkup {
-  // Official free-phone-numbers country filters on ASMS.ai
-  return {
-    inline_keyboard: [
-      [{ text: "🌍 All free public numbers", url: ASMS.countries }],
-      [
-        { text: "🇬🇧 UK", url: ASMS.countryUk },
-        { text: "🇳🇱 NL", url: ASMS.countryNl },
-      ],
-      [
-        { text: "🇫🇮 FI", url: ASMS.countryFi },
-        { text: "🇺🇸 US", url: ASMS.countryUs },
-      ],
-      [
-        { text: "🔄 Refresh", callback_data: "countries" },
-        { text: "« Main menu", callback_data: "start" },
-      ],
-    ],
-  };
-}
-
 function backMenuKeyboard(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [[{ text: "« Main menu", callback_data: "start" }]],
   };
 }
 
+function numbersListKeyboard(
+  slice: AsmsPublicNumber[],
+  country: string,
+  page: number,
+  totalPages: number
+): InlineKeyboardMarkup {
+  const rows: InlineKeyboardButton[][] = slice.map((n) => [
+    {
+      text: n.phone,
+      callback_data: `num:${n.digits}`,
+    },
+  ]);
+
+  const nav: InlineKeyboardButton[] = [];
+  if (page > 0) {
+    nav.push({
+      text: "‹ Prev",
+      callback_data: `numbers:${country}:${page - 1}`,
+    });
+  }
+  if (page < totalPages - 1) {
+    nav.push({
+      text: "Next ›",
+      callback_data: `numbers:${country}:${page + 1}`,
+    });
+  }
+  if (nav.length) rows.push(nav);
+
+  rows.push([
+    {
+      text: "🔄 Refresh",
+      callback_data: `numbers:${country}:${page}:r`,
+    },
+    { text: "🌍 Countries", callback_data: "countries" },
+  ]);
+  rows.push([
+    { text: "Open full directory", url: ASMS.numbers },
+    { text: "« Menu", callback_data: "start" },
+  ]);
+
+  return { inline_keyboard: rows };
+}
+
+function countriesKeyboard(countries: AsmsCountry[]): InlineKeyboardMarkup {
+  const rows: InlineKeyboardButton[][] = [];
+  rows.push([
+    {
+      text: "🌐 All free numbers",
+      callback_data: "numbers:all:0",
+    },
+  ]);
+
+  // Two countries per row; only those with count > 0
+  const usable = countries.filter((c) => c.count > 0);
+  for (let i = 0; i < usable.length; i += 2) {
+    const row: InlineKeyboardButton[] = [];
+    const a = usable[i]!;
+    row.push({
+      text: `${countryLabel(a.code, a.name)} (${a.count})`,
+      callback_data: `numbers:${a.code}:0`,
+    });
+    const b = usable[i + 1];
+    if (b) {
+      row.push({
+        text: `${countryLabel(b.code, b.name)} (${b.count})`,
+        callback_data: `numbers:${b.code}:0`,
+      });
+    }
+    rows.push(row);
+  }
+
+  rows.push([
+    { text: "🔄 Refresh countries", callback_data: "countries:r" },
+    { text: "« Menu", callback_data: "start" },
+  ]);
+  rows.push([{ text: "Open ASMS free directory", url: ASMS.numbers }]);
+  return { inline_keyboard: rows };
+}
+
+function numberDetailKeyboard(
+  number: AsmsPublicNumber,
+  country: string
+): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "📬 Open public inbox on ASMS.ai", url: number.inboxUrl }],
+      [
+        {
+          text: "« Back to list",
+          callback_data: `numbers:${country || "all"}:0`,
+        },
+        { text: "🌍 Countries", callback_data: "countries" },
+      ],
+      [{ text: "« Menu", callback_data: "start" }],
+    ],
+  };
+}
+
 const START_TEXT = `
 <b>${BOT_NAME}</b>
 
-Browse <b>free shared / public</b> temporary SMS numbers via <a href="${ASMS.home}">ASMS.ai</a>.
+Browse <b>live free shared / public</b> temporary SMS numbers from <a href="${ASMS.home}">ASMS.ai</a>.
 
-These are <b>public inboxes</b> — anyone can open the same number and read messages. They are useful for low-risk sign-ups, not for private accounts.
+These are <b>public inboxes</b> — anyone can open the same number and read messages. Use only for low-risk sign-ups.
+
+⚠️ Never use public numbers for banking, payments, password recovery, or sensitive accounts.
 
 <b>Commands</b>
 /start — Main menu
-/numbers — Public number directory
+/numbers — Live free numbers
 /countries — Browse by country
 /help — How to use
 /privacy — Risks &amp; safety
-
-Use the buttons below to open ASMS.ai pages. This bot does <b>not</b> list live numbers or fetch SMS automatically (that requires ASMS paid API access).
-`.trim();
-
-const NUMBERS_TEXT = `
-<b>📱 Public numbers</b>
-
-ASMS.ai publishes a free directory of <b>shared temporary numbers</b>. Anyone can view those inboxes.
-
-Tap the button below to open the official public numbers page. Pick a number there, then open its inbox on ASMS.ai to see public messages.
-
-⚠️ Do <b>not</b> use these numbers for banking, email recovery, or anything sensitive.
-
-<i>Automated number lists and inbox reading require ASMS paid API — not available in this free bot.</i>
-`.trim();
-
-const COUNTRIES_TEXT = `
-<b>🌍 Browse by country</b>
-
-Public numbers are grouped by country on ASMS.ai. Open the directory and filter by the country you need.
-
-This bot links you to the official site. It does not invent or cache phone numbers.
 `.trim();
 
 const HELP_TEXT = `
 <b>❓ Help — ${BOT_NAME}</b>
 
-<b>What this bot does</b>
-• Guides you to ASMS.ai free public temporary numbers
-• Warns about privacy risks of shared inboxes
-• Keeps a simple menu for numbers, countries, help, and privacy
+<b>How to get a code</b>
+1. Open <b>Live free numbers</b> or pick a country
+2. Tap a number — copy the full international format
+3. Enter it on the site that needs verification
+4. Open the <b>public inbox</b> on ASMS.ai (button) and read the SMS yourself
 
-<b>What it does not do</b>
-• Does not invent phone numbers
-• Does not read SMS for you
-• Does not offer private or exclusive numbers on the free tier
+<b>Important</b>
+• Inboxes are <b>public</b> — anyone can read them
+• Numbers are shared and change often
+• This bot does <b>not</b> forward SMS automatically
+• Paid ASMS API is not used here
 
-<b>How to receive a code</b>
-1. Open the public numbers directory ( /numbers )
-2. Choose a free public number on ASMS.ai
-3. Use that number on the site that needs SMS verification
-4. Open the same number’s public inbox on ASMS.ai to read the message
-
-<b>Commands</b>
-/start /numbers /countries /help /privacy
+/privacy for safety details.
 `.trim();
 
 const PRIVACY_TEXT = `
@@ -135,37 +183,21 @@ Free numbers from ASMS.ai are <b>shared public inboxes</b>:
 
 • Anyone on the internet may open the same number
 • Anyone may read messages that arrive there
-• Codes, OTPs, and personal links in those inboxes are not private
+• Codes and links in those inboxes are not private
 
 <b>Never use public numbers for</b>
 • Banking or payment apps
 • Primary email or social accounts
 • Password recovery
 • Government, health, or identity services
-• Anything you would not post on a public website
+• Anything you would not post publicly
 
-Prefer the site’s official verification flow, or a paid private SMS service, for anything important.
-
-${BOT_NAME} only links to public ASMS.ai pages and does not store your messages.
+${BOT_NAME} only reads the public ASMS directory and links to public inbox pages. It does not store your SMS.
 `.trim();
 
 async function replyStart(chatId: number): Promise<void> {
   await sendMessage(chatId, START_TEXT, {
     reply_markup: mainMenuKeyboard(),
-    disable_web_page_preview: true,
-  });
-}
-
-async function replyNumbers(chatId: number): Promise<void> {
-  await sendMessage(chatId, NUMBERS_TEXT, {
-    reply_markup: numbersKeyboard(),
-    disable_web_page_preview: true,
-  });
-}
-
-async function replyCountries(chatId: number): Promise<void> {
-  await sendMessage(chatId, COUNTRIES_TEXT, {
-    reply_markup: countriesKeyboard(),
     disable_web_page_preview: true,
   });
 }
@@ -184,46 +216,220 @@ async function replyPrivacy(chatId: number): Promise<void> {
   });
 }
 
+async function replyCountries(chatId: number): Promise<void> {
+  try {
+    const { countries, sourceUrl } = await fetchPublicNumbers("all");
+    if (countries.length === 0) {
+      await sendMessage(
+        chatId,
+        `Could not load country filters right now.\n\nOpen the official directory:\n${sourceUrl}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Open ASMS free numbers", url: ASMS.numbers }],
+              [{ text: "« Menu", callback_data: "start" }],
+            ],
+          },
+          disable_web_page_preview: true,
+        }
+      );
+      return;
+    }
+
+    const lines = countries
+      .filter((c) => c.count > 0)
+      .map((c) => `• ${countryLabel(c.code, c.name)} — ~${c.count}`)
+      .join("\n");
+
+    await sendMessage(
+      chatId,
+      `<b>🌍 Free numbers by country</b>\n\n` +
+        `Pick a country to load live public numbers from ASMS.ai.\n\n` +
+        `${lines}\n\n` +
+        `<i>Shared public inboxes — not for banking or sensitive accounts.</i>`,
+      {
+        reply_markup: countriesKeyboard(countries),
+        disable_web_page_preview: true,
+      }
+    );
+  } catch (err) {
+    console.error("[bot] countries fetch failed:", err);
+    await sendMessage(
+      chatId,
+      `Could not reach the ASMS free-number directory right now.\n\nTry the official page:\n${ASMS.numbers}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Open ASMS free numbers", url: ASMS.numbers }],
+            [{ text: "« Menu", callback_data: "start" }],
+          ],
+        },
+        disable_web_page_preview: true,
+      }
+    );
+  }
+}
+
+async function replyNumbers(
+  chatId: number,
+  country: string,
+  page: number
+): Promise<void> {
+  const countryKey = country || "all";
+  try {
+    const { numbers, sourceUrl } = await fetchPublicNumbers(
+      countryKey === "all" ? null : countryKey
+    );
+
+    if (numbers.length === 0) {
+      await sendMessage(
+        chatId,
+        `<b>No free public numbers found</b> for this filter right now.\n\n` +
+          `Try another country or open the directory:\n${sourceUrl}\n\n` +
+          `<i>Lists change often. This is not a private SMS service.</i>`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🌍 Countries", callback_data: "countries" }],
+              [{ text: "Open ASMS directory", url: sourceUrl }],
+              [{ text: "« Menu", callback_data: "start" }],
+            ],
+          },
+          disable_web_page_preview: true,
+        }
+      );
+      return;
+    }
+
+    const { slice, page: safePage, totalPages } = paginateNumbers(
+      numbers,
+      page
+    );
+    const scope =
+      countryKey === "all"
+        ? "All countries"
+        : countryLabel(countryKey);
+
+    await sendMessage(
+      chatId,
+      `<b>📱 Free public numbers</b> — ${scope}\n` +
+        `Page ${safePage + 1}/${totalPages} · showing ${slice.length} of ${numbers.length}\n\n` +
+        `Tap a number to copy it, then open its <b>public</b> inbox on ASMS.ai.\n\n` +
+        `⚠️ Shared inbox — anyone can read messages. Not for banking or account recovery.`,
+      {
+        reply_markup: numbersListKeyboard(
+          slice,
+          countryKey,
+          safePage,
+          totalPages
+        ),
+        disable_web_page_preview: true,
+      }
+    );
+  } catch (err) {
+    console.error("[bot] numbers fetch failed:", err);
+    await sendMessage(
+      chatId,
+      `Could not load live numbers from ASMS.ai right now.\n\n` +
+        `Please try again shortly or open:\n${ASMS.numbers}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Open ASMS free numbers", url: ASMS.numbers }],
+            [{ text: "🔄 Retry", callback_data: `numbers:${countryKey}:0` }],
+            [{ text: "« Menu", callback_data: "start" }],
+          ],
+        },
+        disable_web_page_preview: true,
+      }
+    );
+  }
+}
+
+async function replyNumberDetail(
+  chatId: number,
+  digits: string
+): Promise<void> {
+  const phone = digits.startsWith("+") ? digits : `+${digits}`;
+  const number: AsmsPublicNumber = {
+    phone,
+    digits: digits.replace(/\D/g, ""),
+    inboxUrl: `https://asms.ai/number/${digits.replace(/\D/g, "")}`,
+  };
+
+  await sendMessage(
+    chatId,
+    `<b>Selected number</b>\n\n` +
+      `<code>${number.phone}</code>\n\n` +
+      `Copy this full international number into the app that needs verification.\n\n` +
+      `Then open the <b>public inbox</b> on ASMS.ai to read incoming SMS yourself.\n\n` +
+      `⚠️ This inbox is public — do not use it for banking, recovery, or private accounts.\n` +
+      `This bot does not forward SMS automatically.`,
+    {
+      reply_markup: numberDetailKeyboard(number, "all"),
+      disable_web_page_preview: true,
+    }
+  );
+}
+
 function parseCommand(text: string): string {
   const raw = text.trim().split(/\s+/)[0] ?? "";
-  // Strip @BotName from /start@MyBot
   return raw.split("@")[0]!.toLowerCase();
 }
 
 /**
  * Process a single Telegram update (message or callback).
- * Always resolves without throwing to the webhook caller when possible.
  */
 export async function handleUpdate(update: TelegramUpdate): Promise<void> {
   try {
     if (update.callback_query) {
       const cq = update.callback_query;
       const chatId = cq.message?.chat.id;
-      const data = (cq.data ?? "").trim().toLowerCase();
+      const data = (cq.data ?? "").trim();
 
       await answerCallbackQuery(cq.id).catch(() => undefined);
-
       if (!chatId) return;
 
-      switch (data) {
-        case "start":
-          await replyStart(chatId);
-          break;
-        case "numbers":
-          await replyNumbers(chatId);
-          break;
-        case "countries":
-          await replyCountries(chatId);
-          break;
-        case "help":
-          await replyHelp(chatId);
-          break;
-        case "privacy":
-          await replyPrivacy(chatId);
-          break;
-        default:
-          await replyStart(chatId);
+      if (data === "start") {
+        await replyStart(chatId);
+        return;
       }
+      if (data === "help") {
+        await replyHelp(chatId);
+        return;
+      }
+      if (data === "privacy") {
+        await replyPrivacy(chatId);
+        return;
+      }
+      if (data === "countries" || data === "countries:r") {
+        await replyCountries(chatId);
+        return;
+      }
+      if (data === "numbers") {
+        await replyNumbers(chatId, "all", 0);
+        return;
+      }
+
+      // numbers:{country}:{page} or numbers:{country}:{page}:r
+      const numbersMatch = /^numbers:([a-z]+):(\d+)(?::r)?$/.exec(data);
+      if (numbersMatch) {
+        await replyNumbers(
+          chatId,
+          numbersMatch[1]!,
+          Number(numbersMatch[2])
+        );
+        return;
+      }
+
+      // num:{digits}
+      const numMatch = /^num:(\d{8,15})$/.exec(data);
+      if (numMatch) {
+        await replyNumberDetail(chatId, numMatch[1]!);
+        return;
+      }
+
+      await replyStart(chatId);
       return;
     }
 
@@ -236,7 +442,7 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
     if (!text.startsWith("/")) {
       await sendMessage(
         chatId,
-        `Send /start for the menu, or use /numbers · /countries · /help · /privacy.`,
+        `Send /start for the menu, or /numbers · /countries · /help · /privacy.`,
         { reply_markup: mainMenuKeyboard() }
       );
       return;
@@ -249,7 +455,7 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
         await replyStart(chatId);
         break;
       case "/numbers":
-        await replyNumbers(chatId);
+        await replyNumbers(chatId, "all", 0);
         break;
       case "/countries":
         await replyCountries(chatId);
@@ -281,7 +487,6 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
         // ignore secondary failure
       }
     }
-    // Propagate so the webhook can return 500 and Telegram may retry.
     throw err;
   }
 }
