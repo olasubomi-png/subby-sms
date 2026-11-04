@@ -19,7 +19,14 @@ import {
   type TelegramUpdate,
   type InlineKeyboardMarkup,
   type InlineKeyboardButton,
+  type TelegramUser,
 } from "./telegram";
+import {
+  ensureSchema,
+  upsertTelegramUser,
+  setActiveWatchedNumber,
+  deactivateActiveWatchedNumber,
+} from "./db";
 
 function mainMenuKeyboard(): InlineKeyboardMarkup {
   return {
@@ -129,6 +136,7 @@ function numberDetailKeyboard(
   return {
     inline_keyboard: [
       [{ text: "📬 Open public inbox on ASMS.ai", url: number.inboxUrl }],
+      [{ text: "⏹ Stop monitoring", callback_data: "stop" }],
       [
         {
           text: "« Back to list",
@@ -156,6 +164,7 @@ These are <b>public inboxes</b> — anyone can open the same number and read mes
 /countries — Browse by country
 /help — How to use
 /privacy — Risks &amp; safety
+/stop — Stop inbox monitoring
 `.trim();
 
 const HELP_TEXT = `
@@ -170,8 +179,10 @@ const HELP_TEXT = `
 <b>Important</b>
 • Inboxes are <b>public</b> — anyone can read them
 • Numbers are shared and change often
-• This bot does <b>not</b> forward SMS automatically
-• Paid ASMS API is not used here
+• After you select a number, the bot monitors its public inbox for <b>new</b> SMS
+• Existing messages are not re-sent (baseline on first scan)
+• Paid ASMS API is not used — public HTML only
+• Send /stop to cancel monitoring
 
 /privacy for safety details.
 `.trim();
@@ -348,28 +359,96 @@ async function replyNumbers(
 
 async function replyNumberDetail(
   chatId: number,
-  digits: string
+  digits: string,
+  from?: TelegramUser
 ): Promise<void> {
-  const phone = digits.startsWith("+") ? digits : `+${digits}`;
+  const clean = digits.replace(/\D/g, "");
+  const phone = `+${clean}`;
+  const inboxUrl = `https://asms.ai/number/${clean}`;
   const number: AsmsPublicNumber = {
     phone,
-    digits: digits.replace(/\D/g, ""),
-    inboxUrl: `https://asms.ai/number/${digits.replace(/\D/g, "")}`,
+    digits: clean,
+    inboxUrl,
   };
+
+  let monitoringNote =
+    "Monitoring could not be enabled (database unavailable). You can still open the public inbox manually.";
+
+  try {
+    await ensureSchema();
+    const user = await upsertTelegramUser({
+      telegramId: from?.id ?? chatId,
+      chatId,
+      username: from?.username ?? null,
+      firstName: from?.first_name ?? null,
+    });
+    await setActiveWatchedNumber({
+      telegramUserId: user.id,
+      phoneE164: phone,
+      digits: clean,
+      inboxUrl,
+    });
+    monitoringNote =
+      "🔔 <b>Monitoring enabled</b> for this public inbox.\n" +
+      "New SMS that appear on ASMS after this point will be forwarded here.\n" +
+      "Existing messages on the page are not re-sent.\n" +
+      "Send /stop to cancel monitoring.";
+  } catch (err) {
+    console.error("[bot] watch number failed:", err);
+  }
 
   await sendMessage(
     chatId,
     `<b>Selected number</b>\n\n` +
       `<code>${number.phone}</code>\n\n` +
       `Copy this full international number into the app that needs verification.\n\n` +
-      `Then open the <b>public inbox</b> on ASMS.ai to read incoming SMS yourself.\n\n` +
-      `⚠️ This inbox is public — do not use it for banking, recovery, or private accounts.\n` +
-      `This bot does not forward SMS automatically.`,
+      `${monitoringNote}\n\n` +
+      `⚠️ This inbox is <b>public and shared</b> — anyone may read messages. ` +
+      `Not for banking, password recovery, or sensitive accounts.`,
     {
       reply_markup: numberDetailKeyboard(number, "all"),
       disable_web_page_preview: true,
     }
   );
+}
+
+async function replyStop(
+  chatId: number,
+  from?: TelegramUser
+): Promise<void> {
+  try {
+    await ensureSchema();
+    const user = await upsertTelegramUser({
+      telegramId: from?.id ?? chatId,
+      chatId,
+      username: from?.username ?? null,
+      firstName: from?.first_name ?? null,
+    });
+    const stopped = await deactivateActiveWatchedNumber(user.id);
+    if (stopped) {
+      await sendMessage(
+        chatId,
+        `⏹ Stopped monitoring <code>${stopped}</code>.\n\nYou will not receive further SMS alerts until you select a number again.`,
+        {
+          reply_markup: mainMenuKeyboard(),
+          disable_web_page_preview: true,
+        }
+      );
+    } else {
+      await sendMessage(
+        chatId,
+        `No active number was being monitored.`,
+        { reply_markup: mainMenuKeyboard() }
+      );
+    }
+  } catch (err) {
+    console.error("[bot] stop failed:", err);
+    await sendMessage(
+      chatId,
+      "Could not update monitoring right now. Please try again.",
+      { reply_markup: mainMenuKeyboard() }
+    );
+  }
 }
 
 function parseCommand(text: string): string {
@@ -423,9 +502,14 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
       }
 
       // num:{digits}
+      if (data === "stop") {
+        await replyStop(chatId, cq.from);
+        return;
+      }
+
       const numMatch = /^num:(\d{8,15})$/.exec(data);
       if (numMatch) {
-        await replyNumberDetail(chatId, numMatch[1]!);
+        await replyNumberDetail(chatId, numMatch[1]!, cq.from);
         return;
       }
 
@@ -465,6 +549,9 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
         break;
       case "/privacy":
         await replyPrivacy(chatId);
+        break;
+      case "/stop":
+        await replyStop(chatId, message.from);
         break;
       default:
         await sendMessage(

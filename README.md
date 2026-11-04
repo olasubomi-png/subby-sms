@@ -106,3 +106,37 @@ privacy - Privacy risks
 ## License
 
 Private / your project terms. Not affiliated with ASMS.ai.
+
+## SMS inbox monitoring (public ASMS pages)
+
+When a user selects a free number, SUBBY SMS stores the selection in Neon and polls the **public** ASMS inbox HTML for **new** messages.
+
+1. First scan after selection stores messages as a **baseline** (no Telegram spam of history).
+2. Later scans insert only new hashes and notify the user who selected that number.
+3. `/stop` deactivates monitoring.
+
+### Cron endpoint
+
+`GET|POST /api/cron/sms-monitor`
+
+Header required:
+
+```http
+Authorization: Bearer YOUR_CRON_SECRET
+```
+
+Example (external scheduler every 1–2 minutes, e.g. cron-job.org):
+
+```bash
+curl -X GET "https://subby-sms.vercel.app/api/cron/sms-monitor" \
+  -H "Authorization: Bearer YOUR_CRON_SECRET"
+```
+
+Vercel Hobby only supports daily cron expressions; use an external scheduler for frequent polling.
+
+### Extra environment variables
+
+```bash
+DATABASE_URL=   # Neon connection string
+CRON_SECRET=    # long random secret (openssl rand -hex 32)
+```
