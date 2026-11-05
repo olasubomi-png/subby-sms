@@ -52,15 +52,19 @@ export type WatchedNumberRow = {
 /**
  * Idempotent, concurrent-safe schema alignment with the live Neon tables.
  * Never drops tables or data. Only adds missing constraints/columns/indexes.
+ *
+ * Uses a single transaction + pg_advisory_xact_lock so the lock is bound to the
+ * same pooled connection that runs every migration statement (safe with postgres.js).
  */
 export async function ensureSchema(): Promise<void> {
   if (!globalForDb.__subbySchemaReady) {
     globalForDb.__subbySchemaReady = (async () => {
       const sql = getDb();
-      // Serialize migrations across concurrent serverless instances
-      await sql`SELECT pg_advisory_lock(87245001)`;
-      try {
-        await sql`
+      await sql.begin(async (tx) => {
+        // Transaction-scoped lock: held until commit/rollback on this connection
+        await tx`SELECT pg_advisory_xact_lock(87245001)`;
+
+        await tx`
           CREATE TABLE IF NOT EXISTS telegram_users (
             chat_id BIGINT PRIMARY KEY,
             username TEXT,
@@ -68,7 +72,7 @@ export async function ensureSchema(): Promise<void> {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
         `;
-        await sql`
+        await tx`
           CREATE TABLE IF NOT EXISTS watched_numbers (
             id BIGSERIAL PRIMARY KEY,
             chat_id BIGINT NOT NULL REFERENCES telegram_users(chat_id) ON DELETE CASCADE,
@@ -79,7 +83,7 @@ export async function ensureSchema(): Promise<void> {
             last_scanned_at TIMESTAMPTZ
           )
         `;
-        await sql`
+        await tx`
           CREATE TABLE IF NOT EXISTS inbox_messages (
             id BIGSERIAL PRIMARY KEY,
             phone_number TEXT NOT NULL,
@@ -91,7 +95,7 @@ export async function ensureSchema(): Promise<void> {
             detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
         `;
-        await sql`
+        await tx`
           CREATE TABLE IF NOT EXISTS sms_deliveries (
             id BIGSERIAL PRIMARY KEY,
             message_id BIGINT NOT NULL REFERENCES inbox_messages(id) ON DELETE CASCADE,
@@ -101,20 +105,20 @@ export async function ensureSchema(): Promise<void> {
         `;
 
         // Align columns that may exist under older names / be missing
-        await sql`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS last_scanned_at TIMESTAMPTZ`;
-        await sql`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE`;
-        await sql`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS inbox_url TEXT`;
-        await sql`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS phone_number TEXT`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS message_text TEXT`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS verification_code TEXT`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS detected_at TIMESTAMPTZ DEFAULT NOW()`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS sender TEXT`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS message_hash TEXT`;
-        await sql`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS phone_number TEXT`;
+        await tx`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS last_scanned_at TIMESTAMPTZ`;
+        await tx`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE`;
+        await tx`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS inbox_url TEXT`;
+        await tx`ALTER TABLE watched_numbers ADD COLUMN IF NOT EXISTS phone_number TEXT`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS message_text TEXT`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS verification_code TEXT`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS detected_at TIMESTAMPTZ DEFAULT NOW()`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS sender TEXT`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS message_hash TEXT`;
+        await tx`ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS phone_number TEXT`;
 
         // Unique constraints (idempotent via catalog check)
-        await sql`
+        await tx`
           DO $$
           BEGIN
             IF NOT EXISTS (
@@ -126,7 +130,7 @@ export async function ensureSchema(): Promise<void> {
             END IF;
           END $$
         `;
-        await sql`
+        await tx`
           DO $$
           BEGIN
             IF NOT EXISTS (
@@ -138,17 +142,15 @@ export async function ensureSchema(): Promise<void> {
             END IF;
           END $$
         `;
-        await sql`
+        await tx`
           CREATE INDEX IF NOT EXISTS watched_numbers_active_idx
             ON watched_numbers (active) WHERE active = TRUE
         `;
-        await sql`
+        await tx`
           CREATE INDEX IF NOT EXISTS watched_numbers_chat_idx
             ON watched_numbers (chat_id)
         `;
-      } finally {
-        await sql`SELECT pg_advisory_unlock(87245001)`;
-      }
+      });
     })().catch((err) => {
       globalForDb.__subbySchemaReady = undefined;
       throw err;
